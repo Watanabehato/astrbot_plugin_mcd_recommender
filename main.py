@@ -29,7 +29,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.5")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.6")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -566,17 +566,18 @@ class Main(Star):
                 else:
                     coupon_texts.append(str(c))
 
-            # 营养信息截断
-            nutrition_text = ""
-            if nutrition:
-                nutrition_text = str(nutrition)[:200] + "..."
+            # 解析营养信息，匹配推荐餐品
+            nutrition_items = self._match_nutrition_for_recommendations(
+                str(nutrition) if nutrition else "",
+                rec_data.get("recommendations", []),
+            )
 
             data = {
                 "store_name": store.get("storeName", ""),
                 "store_address": store.get("address", ""),
                 "recommendations": rec_data.get("recommendations", []),
                 "coupons": coupon_texts if coupon_texts else None,
-                "nutrition": nutrition_text if nutrition_text else None,
+                "nutrition_items": nutrition_items if nutrition_items else None,
                 "blessing": rec_data.get("blessing", "祝您用餐愉快！"),
             }
 
@@ -595,6 +596,63 @@ class Main(Star):
         except Exception as e:
             logger.error(f"[麦当劳推荐] HTML 渲染异常: {e}", exc_info=True)
             return None
+
+    def _parse_nutrition_data(self, nutrition_str: str) -> List[Dict[str, str]]:
+        """解析营养信息 CSV 字符串为结构化列表
+
+        数据格式示例:
+        (productName,nutritionDescription,energyKj,energyKcal,protein,fat,carbohydrate,sodium,calcium):
+        猪柳麦满分,null,1288,308,16,16,24,781,213 猪柳蛋麦满分,null,1618,387,...
+        """
+        if not nutrition_str:
+            return []
+
+        # 每条记录格式: 名称,null,energyKj,energyKcal,protein,fat,carb,sodium,calcium
+        # 用正则匹配：名称(不含逗号空格),null,后面跟8个数字
+        pattern = r'([^,\s]+),null,(\d+),(\d+),(\d+),(\d+),(\d+),(\d+),(\d+)'
+        matches = re.findall(pattern, nutrition_str)
+
+        result = []
+        for m in matches:
+            result.append({
+                "name": m[0],
+                "energy_kcal": m[2],  # energyKcal
+                "protein": m[3],
+                "fat": m[4],
+                "carb": m[5],
+            })
+        return result
+
+    def _match_nutrition_for_recommendations(
+        self,
+        nutrition_str: str,
+        recommendations: List[Dict[str, Any]],
+    ) -> List[Dict[str, str]]:
+        """从营养数据中匹配推荐餐品的营养信息
+
+        优先匹配推荐餐品；匹配不到则返回前3条作为参考。
+        """
+        all_nutrition = self._parse_nutrition_data(nutrition_str)
+        if not all_nutrition:
+            return []
+
+        matched = []
+        for rec in recommendations:
+            rec_name = rec.get("name", "")
+            for nut in all_nutrition:
+                nut_name = nut["name"]
+                # 双向模糊匹配：推荐餐品名包含营养表餐品名，或反过来
+                if rec_name and nut_name and (
+                    rec_name in nut_name or nut_name in rec_name
+                ):
+                    matched.append(nut)
+                    break
+
+        # 如果一条都没匹配到，返回前3条作为参考
+        if not matched:
+            matched = all_nutrition[:3]
+
+        return matched[:5]  # 最多5条
 
     def _format_text_from_json(self, rec_data: Dict[str, Any], meals_data: Dict[str, Any]) -> str:
         """从 JSON 数据格式化纯文本（渲染失败时的兜底）"""

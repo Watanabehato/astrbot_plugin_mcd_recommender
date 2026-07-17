@@ -4,22 +4,24 @@
 <meta charset="utf-8">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+}
 body {
   font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
-  background: #fef6e4;
-  padding: 0;
-  width: 680px;
+  background: #fffdf8;
   -webkit-font-smoothing: antialiased;
 }
 .card {
+  width: 100%;
   background: #fffdf8;
-  overflow: hidden;
 }
 /* 顶部金色头部 */
 .header {
   background: linear-gradient(135deg, #ffc107 0%, #ff8f00 60%, #ff6f00 100%);
   padding: 32px 36px 28px;
-  position: relative;
 }
 .header-row {
   display: flex;
@@ -166,10 +168,10 @@ body {
   left: 0; top: 0;
   font-size: 14px;
 }
-/* 营养信息 */
+/* 营养信息表格 */
 .nutrition-section {
   margin-top: 16px;
-  padding: 15px 18px;
+  padding: 16px 18px;
   background: linear-gradient(135deg, #f0faf0 0%, #e0f5e0 100%);
   border-radius: 18px;
 }
@@ -177,15 +179,39 @@ body {
   font-size: 15px;
   font-weight: 700;
   color: #4a8c4a;
-  margin-bottom: 9px;
+  margin-bottom: 12px;
   display: flex;
   align-items: center;
   gap: 8px;
 }
-.nutrition-text {
+.nutrition-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 13px;
-  color: #6a8c6a;
-  line-height: 1.6;
+}
+.nutrition-table th {
+  text-align: left;
+  padding: 6px 8px;
+  color: #4a8c4a;
+  font-weight: 600;
+  border-bottom: 2px solid #c5e8c5;
+  white-space: nowrap;
+}
+.nutrition-table td {
+  padding: 7px 8px;
+  color: #5a7a5a;
+  border-bottom: 1px solid #d5ecd5;
+}
+.nutrition-table tr:last-child td {
+  border-bottom: none;
+}
+.nutrition-table .nut-name {
+  font-weight: 600;
+  color: #3a5a3a;
+}
+.nutrition-table .nut-val {
+  white-space: nowrap;
+  text-align: right;
 }
 /* 底部 */
 .footer {
@@ -257,10 +283,27 @@ body {
     </div>
     {% endif %}
 
-    {% if nutrition %}
+    {% if nutrition_items %}
     <div class="nutrition-section">
       <div class="nutrition-title">📊 营养参考</div>
-      <div class="nutrition-text">{{ nutrition }}</div>
+      <table class="nutrition-table">
+        <tr>
+          <th>餐品</th>
+          <th class="nut-val">热量</th>
+          <th class="nut-val">蛋白质</th>
+          <th class="nut-val">脂肪</th>
+          <th class="nut-val">碳水</th>
+        </tr>
+        {% for item in nutrition_items %}
+        <tr>
+          <td class="nut-name">{{ item.name }}</td>
+          <td class="nut-val">{{ item.energy_kcal }}kcal</td>
+          <td class="nut-val">{{ item.protein }}g</td>
+          <td class="nut-val">{{ item.fat }}g</td>
+          <td class="nut-val">{{ item.carb }}g</td>
+        </tr>
+        {% endfor %}
+      </table>
     </div>
     {% endif %}
   </div>
