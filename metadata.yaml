@@ -1,7 +1,7 @@
 name: mcd_recommender
 desc: 麦当劳美食推荐插件 - 检测关键词后调用 LLM 智能推荐麦当劳美食
 author: AstrBot Community
-version: 1.0.2
+version: 1.0.3
 display_name: 麦当劳美食推荐
 short_desc: 关键词触发，智能推荐麦当劳美食
 logo_path: logo.png

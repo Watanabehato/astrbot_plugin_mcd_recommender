@@ -27,7 +27,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.2")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.3")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -434,55 +434,71 @@ class Main(Star):
         user_prompt = f"用户说：{user_message}\n\n请为用户推荐合适的麦当劳美食。"
 
         try:
-            # 使用 AstrBot 的 LLM 生成功能
+            # 获取 LLM Provider ID
             llm_provider_id = self.config.get("llm_provider_id", "")
 
-            # 构建请求参数
-            generate_kwargs = {
-                "prompt": user_prompt,
-                "system_prompt": system_prompt,
-            }
-            if llm_provider_id:
-                generate_kwargs["provider_id"] = llm_provider_id
+            # 如果用户没配置，尝试获取第一个可用的 provider
+            if not llm_provider_id:
+                try:
+                    providers = self.context.get_all_providers()
+                    if providers:
+                        # 获取第一个 provider 的 id
+                        for p in providers:
+                            if hasattr(p, 'id'):
+                                llm_provider_id = p.id
+                                break
+                        if not llm_provider_id:
+                            llm_provider_id = providers[0].id
+                        logger.info(f"[麦当劳推荐] 使用默认 LLM Provider: {llm_provider_id}")
+                except Exception as e:
+                    logger.warning(f"[麦当劳推荐] 获取 Provider 列表失败: {e}")
 
-            # 尝试多种调用方式以兼容不同版本
-            try:
-                resp = await self.context.llm_generate(**generate_kwargs)
-            except TypeError:
-                # 如果参数不兼容，尝试只传 prompt
-                full_prompt = f"{system_prompt}\n\n用户: {user_prompt}"
-                resp = await self.context.llm_generate(prompt=full_prompt)
+            if not llm_provider_id:
+                logger.error("[麦当劳推荐] 没有可用的 LLM Provider")
+                return self._get_fallback_recommendation(user_message, meals_data)
+
+            logger.info(f"[麦当劳推荐] 调用 LLM 生成推荐 (provider: {llm_provider_id})...")
+
+            resp = await self.context.llm_generate(
+                chat_provider_id=llm_provider_id,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
 
             # 解析返回结果
             if resp is None:
+                logger.warning("[麦当劳推荐] LLM 返回 None")
                 return self._get_fallback_recommendation(user_message, meals_data)
 
-            if isinstance(resp, str):
-                return resp
-            elif hasattr(resp, 'content'):
-                content = resp.content
-                if isinstance(content, str):
-                    return content
-                elif isinstance(content, list):
-                    # 可能是消息链
-                    texts = []
-                    for item in content:
-                        if isinstance(item, str):
-                            texts.append(item)
-                        elif hasattr(item, 'text'):
-                            texts.append(item.text)
-                        elif hasattr(item, 'content'):
-                            texts.append(str(item.content))
-                    return "\n".join(texts) if texts else str(resp)
-                else:
-                    return str(content)
-            elif hasattr(resp, 'message'):
-                return str(resp.message)
-            else:
-                return str(resp)
+            # LLMResponse 的 completion_text 属性获取纯文本
+            if hasattr(resp, 'completion_text'):
+                text = resp.completion_text
+                if text:
+                    logger.info("[麦当劳推荐] LLM 生成成功!")
+                    return text
+                logger.warning("[麦当劳推荐] LLM completion_text 为空")
+            elif hasattr(resp, 'result_chain') and resp.result_chain:
+                # 从消息链中提取文本
+                texts = []
+                for item in resp.result_chain:
+                    if hasattr(item, 'text'):
+                        texts.append(item.text)
+                    elif isinstance(item, str):
+                        texts.append(item)
+                if texts:
+                    logger.info("[麦当劳推荐] LLM 生成成功!")
+                    return "\n".join(texts)
+
+            # 如果以上都失败，尝试转字符串
+            result_str = str(resp)
+            if result_str and result_str != "None":
+                return result_str
+
+            logger.warning("[麦当劳推荐] LLM 返回内容为空，使用降级推荐")
+            return self._get_fallback_recommendation(user_message, meals_data)
 
         except Exception as e:
-            logger.error(f"LLM 生成推荐失败: {e}", exc_info=True)
+            logger.error(f"[麦当劳推荐] LLM 生成推荐失败: {e}", exc_info=True)
             # 降级：返回基础推荐
             return self._get_fallback_recommendation(user_message, meals_data)
 
