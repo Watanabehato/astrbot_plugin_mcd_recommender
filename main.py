@@ -29,7 +29,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.4")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.5")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -581,7 +581,15 @@ class Main(Star):
             }
 
             # 调用 html_render 渲染
-            url = await self.html_render(tmpl, data, return_url=True)
+            # 使用 PNG 格式 + 高质量，覆盖默认的 jpeg quality=40
+            render_options = {
+                "type": "png",
+                "quality": 100,
+                "full_page": True,
+            }
+            url = await self.html_render(
+                tmpl, data, return_url=True, options=render_options
+            )
             return url
 
         except Exception as e:
