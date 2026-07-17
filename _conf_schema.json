@@ -1,0 +1,65 @@
+{
+  "mcp_token": {
+    "description": "麦当劳 MCP Token",
+    "type": "string",
+    "hint": "在 https://open.mcd.cn/mcp/doc 申请 MCP Token，申请后填入此处",
+    "default": ""
+  },
+  "trigger_keywords": {
+    "description": "触发关键词（逗号分隔）",
+    "type": "string",
+    "hint": "检测到这些关键词时触发美食推荐，多个关键词用英文逗号分隔",
+    "default": "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵"
+  },
+  "keyword_match_mode": {
+    "description": "关键词匹配模式",
+    "type": "string",
+    "options": ["包含匹配", "精确匹配", "正则匹配"],
+    "default": "包含匹配"
+  },
+  "default_city": {
+    "description": "默认城市",
+    "type": "string",
+    "hint": "用户未指定城市时使用的默认城市",
+    "default": "北京市"
+  },
+  "default_store_code": {
+    "description": "默认门店编码（可选）",
+    "type": "string",
+    "hint": "填写后直接使用该门店查询餐品，留空则自动查询附近门店",
+    "default": ""
+  },
+  "order_type": {
+    "description": "点餐方式",
+    "type": "string",
+    "options": ["到店取餐", "麦乐送外送"],
+    "default": "到店取餐"
+  },
+  "recommendation_style": {
+    "description": "推荐风格",
+    "type": "string",
+    "options": ["活泼可爱", "专业简洁", "幽默风趣", "温暖治愈"],
+    "default": "活泼可爱"
+  },
+  "enable_nutrition_info": {
+    "description": "显示营养信息",
+    "type": "bool",
+    "default": true
+  },
+  "enable_coupon_info": {
+    "description": "显示优惠券信息",
+    "type": "bool",
+    "default": true
+  },
+  "max_recommendations": {
+    "description": "最大推荐数量",
+    "type": "int",
+    "hint": "单次最多推荐几款餐品",
+    "default": 5
+  },
+  "llm_provider_id": {
+    "description": "使用的 LLM 提供商",
+    "type": "string",
+    "_special": "select_provider"
+  }
+}
