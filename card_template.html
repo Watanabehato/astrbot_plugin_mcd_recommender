@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  background: linear-gradient(160deg, #fff4d6 0%, #ffe8a3 45%, #ffd24a 100%);
+  padding: 28px;
+  width: 540px;
+}
+.card {
+  background: #fffdf8;
+  border-radius: 28px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgba(220, 140, 0, 0.28), 0 2px 8px rgba(0,0,0,0.06);
+}
+/* 顶部金色拱门头部 */
+.header {
+  background: linear-gradient(135deg, #ffc107 0%, #ff8f00 55%, #ff6f00 100%);
+  padding: 26px 30px 22px;
+  position: relative;
+}
+.header::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -1px;
+  height: 14px;
+  background: #fffdf8;
+  border-radius: 28px 28px 0 0;
+}
+.header-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.logo-badge {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  flex-shrink: 0;
+}
+.header-title {
+  color: #fff;
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.18);
+}
+.header-subtitle {
+  color: rgba(255,255,255,0.92);
+  font-size: 12px;
+  margin-top: 3px;
+  letter-spacing: 0.5px;
+}
+/* 门店信息 */
+.store-info {
+  padding: 16px 30px 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #8a5a00;
+}
+.store-icon { font-size: 15px; }
+.store-name { font-weight: 600; }
+.store-address { color: #b08a3e; font-size: 12px; }
+/* 内容区 */
+.content {
+  padding: 18px 30px 10px;
+}
+.section-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #3a2a00;
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.section-title::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  background: linear-gradient(180deg, #ffc107, #ff8f00);
+  border-radius: 3px;
+}
+.recommend-list {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.recommend-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 13px;
+  padding: 13px 15px;
+  background: linear-gradient(135deg, #fffaf0 0%, #fff4e0 100%);
+  border-radius: 16px;
+  border: 1px solid #ffe4b5;
+}
+.recommend-emoji {
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(220,140,0,0.12);
+}
+.recommend-detail { flex: 1; min-width: 0; }
+.recommend-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
+}
+.recommend-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: #2a1d00;
+}
+.recommend-price {
+  background: linear-gradient(135deg, #ff8f00, #ff6f00);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 10px;
+}
+.recommend-desc {
+  font-size: 12.5px;
+  color: #8a6d3b;
+  line-height: 1.55;
+}
+/* 优惠券 */
+.coupon-section {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffeaea 100%);
+  border-radius: 16px;
+  border: 1px dashed #ffb3b3;
+}
+.coupon-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #d9534f;
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.coupon-list { display: flex; flex-direction: column; gap: 5px; }
+.coupon-item {
+  font-size: 12.5px;
+  color: #6b4444;
+  padding-left: 18px;
+  position: relative;
+  line-height: 1.5;
+}
+.coupon-item::before {
+  content: "🎟";
+  position: absolute;
+  left: 0; top: 0;
+  font-size: 12px;
+}
+/* 营养信息 */
+.nutrition-section {
+  margin-top: 14px;
+  padding: 13px 16px;
+  background: linear-gradient(135deg, #f0faf0 0%, #e0f5e0 100%);
+  border-radius: 16px;
+}
+.nutrition-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #4a8c4a;
+  margin-bottom: 7px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nutrition-text {
+  font-size: 11.5px;
+  color: #6a8c6a;
+  line-height: 1.55;
+}
+/* 底部 */
+.footer {
+  padding: 16px 30px 22px;
+  text-align: center;
+  border-top: 1px solid #fff0d0;
+  margin-top: 6px;
+}
+.footer-text {
+  font-size: 11px;
+  color: #c4a35a;
+}
+.footer-blessing {
+  font-size: 14px;
+  color: #ff6f00;
+  font-weight: 700;
+  margin-top: 8px;
+  letter-spacing: 0.5px;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="header-row">
+      <div class="logo-badge">🍔</div>
+      <div>
+        <div class="header-title">麦当劳美食推荐</div>
+        <div class="header-subtitle">McDonald's · 为你精选</div>
+      </div>
+    </div>
+  </div>
+
+  {% if store_name %}
+  <div class="store-info">
+    <span class="store-icon">📍</span>
+    <span class="store-name">{{ store_name }}</span>
+    {% if store_address %}<span class="store-address">· {{ store_address }}</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="content">
+    <div class="section-title">🍽️ 为你推荐</div>
+    <div class="recommend-list">
+      {% for item in recommendations %}
+      <div class="recommend-item">
+        <div class="recommend-emoji">{{ item.emoji }}</div>
+        <div class="recommend-detail">
+          <div class="recommend-name-row">
+            <span class="recommend-name">{{ item.name }}</span>
+            {% if item.price %}<span class="recommend-price">{{ item.price }}</span>{% endif %}
+          </div>
+          {% if item.reason %}
+          <div class="recommend-desc">{{ item.reason }}</div>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    {% if coupons %}
+    <div class="coupon-section">
+      <div class="coupon-title">🎫 可用优惠券</div>
+      <div class="coupon-list">
+        {% for coupon in coupons %}
+        <div class="coupon-item">{{ coupon }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {% if nutrition %}
+    <div class="nutrition-section">
+      <div class="nutrition-title">📊 营养参考</div>
+      <div class="nutrition-text">{{ nutrition }}</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="footer">
+    <div class="footer-text">💡 价格以门店实际为准 · 数据来自麦当劳 MCP</div>
+    <div class="footer-blessing">{{ blessing }}</div>
+  </div>
+</div>
+</body>
+</html>

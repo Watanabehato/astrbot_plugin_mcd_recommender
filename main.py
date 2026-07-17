@@ -5,15 +5,17 @@
 
 import re
 import json
-import logging
+import os
 from typing import Optional, List, Dict, Any
 
 from astrbot.api.star import Star, Context
 from astrbot.api.event import filter, AstrMessageEvent
+from astrbot.api import logger  # 使用 astrbot 提供的 logger 接口
 
 from .mcp_client import McdMCPClient
 
-logger = logging.getLogger(__name__)
+# 卡片 HTML 模板路径
+CARD_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "card_template.html")
 
 
 class Main(Star):
@@ -27,7 +29,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.3")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.4")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -399,17 +401,12 @@ class Main(Star):
         user_message: str,
         meals_data: Dict[str, Any],
         event: AstrMessageEvent
-    ) -> str:
+    ) -> tuple:
         """
         使用 LLM 生成美食推荐
 
-        Args:
-            user_message: 用户消息
-            meals_data: 餐品数据
-            event: 消息事件
-
         Returns:
-            推荐结果文本
+            (image_url_or_path, text_fallback): 图片URL/路径, 纯文本兜底
         """
         style_prompt = self._get_recommendation_style_prompt()
         max_rec = self.config.get("max_recommendations", 5)
@@ -419,30 +416,42 @@ class Main(Star):
 
 请根据用户的需求，从麦当劳餐品中推荐最合适的美食。
 
-推荐要求：
+**你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
+```json
+{{
+  "recommendations": [
+    {{
+      "name": "餐品名称",
+      "emoji": "🍔",
+      "price": "¥XX",
+      "reason": "推荐理由（一句话）"
+    }}
+  ],
+  "blessing": "一句温馨的祝福语"
+}}
+```
+
+要求：
 1. 推荐 {max_rec} 款以内的餐品
-2. 每款推荐要说明推荐理由
-3. 如果有优惠活动或优惠券，可以提及
-4. 如果用户有特殊需求（如减脂、早餐、套餐等），请针对性推荐
-5. 结尾可以加一句温馨的祝福语
+2. 每款推荐要有 emoji 表情和推荐理由
+3. 如果用户有特殊需求（如减脂、早餐、套餐等），请针对性推荐
+4. blessing 是一句简短的祝福语
+5. 只输出 JSON，不要输出 ```json 标记
 
 以下是当前可用的餐品信息：
 {meals_context}
 
-注意：如果餐品信息不完整或获取失败，请基于你对麦当劳的了解进行推荐，并说明数据可能有所更新，以实际门店为准。"""
+注意：如果餐品信息不完整，请基于你对麦当劳的了解进行推荐。"""
 
-        user_prompt = f"用户说：{user_message}\n\n请为用户推荐合适的麦当劳美食。"
+        user_prompt = f"用户说：{user_message}\n\n请为用户推荐合适的麦当劳美食，以 JSON 格式回复。"
 
         try:
             # 获取 LLM Provider ID
             llm_provider_id = self.config.get("llm_provider_id", "")
-
-            # 如果用户没配置，尝试获取第一个可用的 provider
             if not llm_provider_id:
                 try:
                     providers = self.context.get_all_providers()
                     if providers:
-                        # 获取第一个 provider 的 id
                         for p in providers:
                             if hasattr(p, 'id'):
                                 llm_provider_id = p.id
@@ -455,7 +464,7 @@ class Main(Star):
 
             if not llm_provider_id:
                 logger.error("[麦当劳推荐] 没有可用的 LLM Provider")
-                return self._get_fallback_recommendation(user_message, meals_data)
+                return None, self._get_fallback_recommendation(user_message, meals_data)
 
             logger.info(f"[麦当劳推荐] 调用 LLM 生成推荐 (provider: {llm_provider_id})...")
 
@@ -465,42 +474,147 @@ class Main(Star):
                 system_prompt=system_prompt,
             )
 
-            # 解析返回结果
             if resp is None:
                 logger.warning("[麦当劳推荐] LLM 返回 None")
-                return self._get_fallback_recommendation(user_message, meals_data)
+                return None, self._get_fallback_recommendation(user_message, meals_data)
 
-            # LLMResponse 的 completion_text 属性获取纯文本
+            # 获取 LLM 返回文本
+            llm_text = ""
             if hasattr(resp, 'completion_text'):
-                text = resp.completion_text
-                if text:
-                    logger.info("[麦当劳推荐] LLM 生成成功!")
-                    return text
-                logger.warning("[麦当劳推荐] LLM completion_text 为空")
+                llm_text = resp.completion_text or ""
             elif hasattr(resp, 'result_chain') and resp.result_chain:
-                # 从消息链中提取文本
                 texts = []
                 for item in resp.result_chain:
                     if hasattr(item, 'text'):
                         texts.append(item.text)
                     elif isinstance(item, str):
                         texts.append(item)
-                if texts:
-                    logger.info("[麦当劳推荐] LLM 生成成功!")
-                    return "\n".join(texts)
+                llm_text = "\n".join(texts)
 
-            # 如果以上都失败，尝试转字符串
-            result_str = str(resp)
-            if result_str and result_str != "None":
-                return result_str
+            if not llm_text:
+                logger.warning("[麦当劳推荐] LLM 返回内容为空")
+                return None, self._get_fallback_recommendation(user_message, meals_data)
 
-            logger.warning("[麦当劳推荐] LLM 返回内容为空，使用降级推荐")
-            return self._get_fallback_recommendation(user_message, meals_data)
+            logger.info(f"[麦当劳推荐] LLM 返回: {llm_text[:200]}...")
+
+            # 解析 JSON
+            rec_data = self._parse_llm_json(llm_text)
+            if not rec_data:
+                logger.warning("[麦当劳推荐] JSON 解析失败，使用纯文本")
+                return None, llm_text
+
+            # 用 HTML 模板渲染成图片
+            image_url = await self._render_card(rec_data, meals_data)
+            if image_url:
+                logger.info("[麦当劳推荐] HTML 渲染成功!")
+                return image_url, llm_text
+            else:
+                logger.warning("[麦当劳推荐] HTML 渲染失败，使用纯文本")
+                return None, self._format_text_from_json(rec_data, meals_data)
 
         except Exception as e:
             logger.error(f"[麦当劳推荐] LLM 生成推荐失败: {e}", exc_info=True)
-            # 降级：返回基础推荐
-            return self._get_fallback_recommendation(user_message, meals_data)
+            return None, self._get_fallback_recommendation(user_message, meals_data)
+
+    def _parse_llm_json(self, text: str) -> Optional[Dict[str, Any]]:
+        """从 LLM 返回文本中解析 JSON"""
+        if not text:
+            return None
+
+        # 清理 markdown 代码块标记
+        text = text.strip()
+        if text.startswith("```"):
+            # 去掉 ```json 或 ``` 标记
+            lines = text.split("\n")
+            lines = [l for l in lines if not l.strip().startswith("```")]
+            text = "\n".join(lines)
+
+        # 尝试直接解析
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # 尝试提取 { 到 } 之间的内容
+        first = text.find("{")
+        last = text.rfind("}")
+        if first >= 0 and last > first:
+            try:
+                return json.loads(text[first:last + 1])
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    async def _render_card(self, rec_data: Dict[str, Any], meals_data: Dict[str, Any]) -> Optional[str]:
+        """用 HTML 模板渲染推荐卡片为图片"""
+        try:
+            # 读取 HTML 模板
+            with open(CARD_TEMPLATE_PATH, "r", encoding="utf-8") as f:
+                tmpl = f.read()
+
+            # 准备渲染数据
+            store = meals_data.get("store") or {}
+            coupons = meals_data.get("coupons") or []
+            nutrition = meals_data.get("nutrition")
+
+            # 构造优惠券列表
+            coupon_texts = []
+            for c in coupons[:4]:
+                if isinstance(c, dict):
+                    coupon_texts.append(c.get("title", ""))
+                else:
+                    coupon_texts.append(str(c))
+
+            # 营养信息截断
+            nutrition_text = ""
+            if nutrition:
+                nutrition_text = str(nutrition)[:200] + "..."
+
+            data = {
+                "store_name": store.get("storeName", ""),
+                "store_address": store.get("address", ""),
+                "recommendations": rec_data.get("recommendations", []),
+                "coupons": coupon_texts if coupon_texts else None,
+                "nutrition": nutrition_text if nutrition_text else None,
+                "blessing": rec_data.get("blessing", "祝您用餐愉快！"),
+            }
+
+            # 调用 html_render 渲染
+            url = await self.html_render(tmpl, data, return_url=True)
+            return url
+
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] HTML 渲染异常: {e}", exc_info=True)
+            return None
+
+    def _format_text_from_json(self, rec_data: Dict[str, Any], meals_data: Dict[str, Any]) -> str:
+        """从 JSON 数据格式化纯文本（渲染失败时的兜底）"""
+        lines = ["🍟 为你推荐以下麦当劳美食：", ""]
+
+        for item in rec_data.get("recommendations", []):
+            emoji = item.get("emoji", "🍔")
+            name = item.get("name", "未知")
+            price = item.get("price", "")
+            reason = item.get("reason", "")
+            line = f"{emoji} {name}"
+            if price:
+                line += f" {price}"
+            lines.append(line)
+            if reason:
+                lines.append(f"   {reason}")
+
+        blessing = rec_data.get("blessing", "")
+        if blessing:
+            lines.append("")
+            lines.append(f"✨ {blessing}")
+
+        store = meals_data.get("store") or {}
+        if store.get("storeName"):
+            lines.append("")
+            lines.append(f"📍 {store['storeName']}")
+
+        return "\n".join(lines)
 
     def _get_fallback_recommendation(self, user_message: str, meals_data: Dict[str, Any]) -> str:
         """降级推荐方案"""
@@ -579,8 +693,13 @@ class Main(Star):
 
         logger.info("[麦当劳推荐] 收到 /mcd 指令，触发美食推荐")
 
-        recommendation = await self._do_recommendation(user_message, event)
-        yield event.plain_result(recommendation)
+        image_url, text_fallback = await self._do_recommendation(user_message, event)
+        if image_url:
+            logger.info("[麦当劳推荐] 渲染图片成功，发送图片消息")
+            yield event.image_result(image_url)
+        else:
+            logger.info("[麦当劳推荐] 未渲染图片，发送文本消息")
+            yield event.plain_result(text_fallback)
         event.stop_event()
 
     async def _run_diagnostics(self) -> str:
@@ -689,8 +808,13 @@ class Main(Star):
 
         logger.info(f"[麦当劳推荐] 检测到关键词 '{matched_keyword}'，触发美食推荐")
 
-        recommendation = await self._do_recommendation(message, event)
-        yield event.plain_result(recommendation)
+        image_url, text_fallback = await self._do_recommendation(message, event)
+        if image_url:
+            logger.info("[麦当劳推荐] 渲染图片成功，发送图片消息")
+            yield event.image_result(image_url)
+        else:
+            logger.info("[麦当劳推荐] 未渲染图片，发送文本消息")
+            yield event.plain_result(text_fallback)
         event.stop_event()
 
     async def initialize(self):
