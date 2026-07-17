@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", "Source Han Sans SC", sans-serif;
+  background: #fffdf8;
+  -webkit-font-smoothing: antialiased;
+}
+.card { width: 100%; background: #fffdf8; }
+.header {
+  background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 60%, #d9534f 100%);
+  padding: 32px 36px 28px;
+}
+.header-row { display: flex; align-items: center; gap: 18px; }
+.logo-badge {
+  width: 64px; height: 64px; border-radius: 50%;
+  background: #fff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 36px;
+  box-shadow: 0 6px 16px rgba(0,0,0,0.18);
+  flex-shrink: 0;
+}
+.header-title {
+  color: #fff; font-size: 26px; font-weight: 800;
+  letter-spacing: 2px;
+  text-shadow: 0 2px 8px rgba(0,0,0,0.22);
+}
+.header-subtitle {
+  color: rgba(255,255,255,0.95); font-size: 14px;
+  margin-top: 4px; letter-spacing: 1px;
+}
+.store-info {
+  padding: 18px 36px 8px;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 15px; color: #8a5a00;
+}
+.store-icon { font-size: 18px; }
+.store-name { font-weight: 600; }
+.store-address { color: #b08a3e; font-size: 13px; }
+.content { padding: 22px 36px 14px; }
+.section-title {
+  font-size: 18px; font-weight: 700; color: #3a2a00;
+  margin-bottom: 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-title::before {
+  content: ""; width: 5px; height: 20px;
+  background: linear-gradient(180deg, #ff6b6b, #d9534f);
+  border-radius: 3px;
+}
+.coupon-list { display: flex; flex-direction: column; gap: 12px; }
+.coupon-card {
+  display: flex; align-items: stretch;
+  background: linear-gradient(135deg, #fff5f5 0%, #ffeaea 100%);
+  border-radius: 16px;
+  border: 1px solid #ffcaca;
+  overflow: hidden;
+}
+.coupon-left {
+  background: linear-gradient(135deg, #ff6b6b, #d9534f);
+  color: #fff;
+  padding: 14px 16px;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  min-width: 90px;
+  flex-shrink: 0;
+}
+.coupon-discount {
+  font-size: 24px; font-weight: 800; line-height: 1.2;
+}
+.coupon-discount-label {
+  font-size: 11px; margin-top: 2px; opacity: 0.9;
+}
+.coupon-right {
+  padding: 14px 18px;
+  flex: 1; min-width: 0;
+  display: flex; flex-direction: column; justify-content: center;
+}
+.coupon-title-text {
+  font-size: 16px; font-weight: 700; color: #6b1a1a;
+  margin-bottom: 4px;
+}
+.coupon-desc {
+  font-size: 13px; color: #9a5a5a; line-height: 1.5;
+}
+.coupon-tag {
+  display: inline-block;
+  font-size: 11px; color: #d9534f;
+  background: #fff0f0;
+  border: 1px solid #ffcccc;
+  border-radius: 8px;
+  padding: 2px 8px;
+  margin-top: 6px;
+}
+.footer {
+  padding: 20px 36px 26px;
+  text-align: center;
+  border-top: 1px solid #fff0d0;
+  margin-top: 8px;
+}
+.footer-text { font-size: 12px; color: #c4a35a; }
+.footer-blessing {
+  font-size: 16px; color: #d9534f; font-weight: 700;
+  margin-top: 10px; letter-spacing: 0.5px;
+}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="header">
+    <div class="header-row">
+      <div class="logo-badge">🎫</div>
+      <div>
+        <div class="header-title">麦当劳优惠券</div>
+        <div class="header-subtitle">McDonald's · 优惠精选</div>
+      </div>
+    </div>
+  </div>
+
+  {% if store_name %}
+  <div class="store-info">
+    <span class="store-icon">📍</span>
+    <span class="store-name">{{ store_name }}</span>
+    {% if store_address %}<span class="store-address">· {{ store_address }}</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="content">
+    <div class="section-title">🎫 当前可用优惠券</div>
+    <div class="coupon-list">
+      {% for coupon in coupons %}
+      <div class="coupon-card">
+        <div class="coupon-left">
+          <div class="coupon-discount">{{ coupon.discount }}</div>
+          <div class="coupon-discount-label">优惠</div>
+        </div>
+        <div class="coupon-right">
+          <div class="coupon-title-text">{{ coupon.title }}</div>
+          {% if coupon.description %}
+          <div class="coupon-desc">{{ coupon.description }}</div>
+          {% endif %}
+          {% if coupon.tag %}
+          <span class="coupon-tag">{{ coupon.tag }}</span>
+          {% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-text">💡 优惠券以门店实际为准 · 数据来自麦当劳 MCP</div>
+    <div class="footer-blessing">{{ blessing }}</div>
+  </div>
+</div>
+</body>
+</html>

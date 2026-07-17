@@ -57,6 +57,12 @@
     "hint": "单次最多推荐几款餐品",
     "default": 5
   },
+  "enable_intent_detection": {
+    "description": "启用自然语言意图识别",
+    "type": "bool",
+    "hint": "开启后，用户说\"帮我查优惠券\"\"附近门店\"\"有什么活动\"等自然语言会自动触发对应功能",
+    "default": true
+  },
   "llm_provider_id": {
     "description": "使用的 LLM 提供商",
     "type": "string",

@@ -17,6 +17,13 @@ from .mcp_client import McdMCPClient
 
 # 卡片 HTML 模板路径
 CARD_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "card_template.html")
+COUPON_TEMPLATE_PATH = os.path.join(os.path.dirname(__file__), "coupon_template.html")
+
+# 意图关键词组（用于自然语言意图识别）
+INTENT_COUPON_KEYWORDS = ["优惠券", "优惠", "折扣", "打折", "券", "省钱", "划算", "便宜"]
+INTENT_STORE_KEYWORDS = ["门店", "附近", "哪里有", "离我近", "地址", "在哪个", "几家"]
+INTENT_ACTIVITY_KEYWORDS = ["活动", "促销", "新品", "上新", "限定", "日历", "有什么活动"]
+INTENT_NUTRITION_KEYWORDS = ["营养", "热量", "卡路里", "减肥", "减脂", "低卡", "蛋白质"]
 
 
 class Main(Star):
@@ -30,7 +37,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.7")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.1.0")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -80,6 +87,30 @@ class Main(Star):
             for kw in keywords:
                 if kw.lower() in message_lower:
                     return kw
+
+        return None
+
+    def _detect_intent(self, message: str) -> str:
+        """检测用户消息的意图
+
+        Returns:
+            意图类型: "coupon" | "store" | "activity" | "nutrition" | None
+        """
+        msg_lower = message.lower().strip()
+
+        # 优先级：优惠券 > 门店 > 活动 > 营养 > None
+        for kw in INTENT_COUPON_KEYWORDS:
+            if kw in msg_lower:
+                return "coupon"
+        for kw in INTENT_STORE_KEYWORDS:
+            if kw in msg_lower:
+                return "store"
+        for kw in INTENT_ACTIVITY_KEYWORDS:
+            if kw in msg_lower:
+                return "activity"
+        for kw in INTENT_NUTRITION_KEYWORDS:
+            if kw in msg_lower:
+                return "nutrition"
 
         return None
 
@@ -707,6 +738,563 @@ class Main(Star):
 ⚠️ [降级模式] MCP 实时数据获取失败: {error_reason}
 以上为通用推荐，具体以门店实际供应为准。"""
 
+    # ========== 意图处理方法 ==========
+
+    async def _handle_coupon_intent(
+        self, message: str, event: AstrMessageEvent
+    ) -> tuple:
+        """处理优惠券查询意图
+
+        Returns:
+            (image_url_or_path, text_fallback)
+        """
+        logger.info("[麦当劳推荐] 意图: 查询优惠券")
+
+        city = self._extract_city(message) or self.config.get("default_city", "北京市")
+        meals_data = await self._get_meals_data(city)
+
+        coupons = meals_data.get("coupons") or []
+        if not coupons:
+            text = "🎫 抱歉，当前没有查询到可用的优惠券信息，请稍后再试~"
+            return None, text
+
+        # 用 LLM 整理优惠券信息并生成祝福语
+        coupon_summary = self._format_coupons_for_prompt(coupons)
+        style_prompt = self._get_recommendation_style_prompt()
+
+        system_prompt = f"""你是一个麦当劳优惠券助手。{style_prompt}。
+
+根据提供的优惠券数据，生成一段简短的优惠券整理，并配一句祝福语。
+
+**你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
+```json
+{{
+  "coupons": [
+    {{
+      "title": "优惠券标题",
+      "discount": "优惠金额/折扣",
+      "description": "简短描述（一句话）",
+      "tag": "标签（如：限时/热门/超值，可选）"
+    }}
+  ],
+  "blessing": "一句关于省钱/优惠的祝福语"
+}}
+```
+
+要求：
+1. 整理 {min(8, len(coupons))} 张以内的优惠券
+2. 从原始数据中提取或推断优惠金额
+3. blessing 每次措辞不同，和省钱/优惠相关
+4. 只输出 JSON，不要输出 ```json 标记
+
+优惠券原始数据：
+{coupon_summary}"""
+
+        user_prompt = f"用户说：{message}\n\n请整理当前的麦当劳优惠券信息，以 JSON 格式回复。"
+
+        try:
+            llm_provider_id = await self._get_llm_provider_id()
+            if not llm_provider_id:
+                return None, "❌ 没有可用的 LLM Provider，无法生成优惠券整理。"
+
+            resp = await self.context.llm_generate(
+                chat_provider_id=llm_provider_id,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
+
+            llm_text = self._get_llm_text(resp)
+            if not llm_text:
+                return None, "❌ LLM 返回内容为空"
+
+            rec_data = self._extract_json_from_text(llm_text)
+            if not rec_data:
+                return None, "❌ 无法解析 LLM 返回的 JSON"
+
+            # 渲染优惠券卡片
+            image_url = await self._render_coupon_card(rec_data, meals_data)
+            text_fallback = self._format_coupon_text(rec_data, meals_data)
+            return image_url, text_fallback
+
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] 优惠券处理异常: {e}", exc_info=True)
+            text = self._format_coupon_text_fallback(coupons)
+            return None, text
+
+    async def _handle_store_intent(
+        self, message: str, event: AstrMessageEvent
+    ) -> tuple:
+        """处理门店查询意图
+
+        Returns:
+            (image_url_or_path, text_fallback)
+        """
+        logger.info("[麦当劳推荐] 意图: 查询门店")
+
+        city = self._extract_city(message) or self.config.get("default_city", "北京市")
+        keyword = self._extract_keyword(message)
+
+        if not self.mcp_client:
+            return None, "❌ 未配置麦当劳 MCP Token，无法查询门店"
+
+        try:
+            init_ok = await self.mcp_client.ensure_initialized()
+            if not init_ok:
+                return None, "❌ MCP 初始化失败"
+
+            _, be_type = self._get_order_type_config()
+            stores_resp = await self.mcp_client.query_nearby_stores(
+                city=city, keyword=keyword, be_type=be_type
+            )
+            stores_data = self._parse_mcp_response(stores_resp)
+
+            if not stores_data or not isinstance(stores_data, list):
+                return None, f"抱歉，未找到 {city} 的麦当劳门店信息~"
+
+            # 用 LLM 生成门店介绍
+            store_list = self._format_stores_for_prompt(stores_data[:8])
+            style_prompt = self._get_recommendation_style_prompt()
+
+            system_prompt = f"""你是一个麦当劳门店查询助手。{style_prompt}。
+
+根据提供的门店数据，整理出门店列表并生成简短介绍。
+
+**你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
+```json
+{{
+  "city": "城市名",
+  "stores": [
+    {{
+      "name": "门店名称",
+      "address": "门店地址",
+      "distance": "距离信息（如有）",
+      "business_hours": "营业时间（如有）"
+    }}
+  ],
+  "blessing": "一句关于探店的祝福语"
+}}
+```
+
+要求：
+1. 整理 5 家以内的门店
+2. blessing 每次措辞不同
+3. 只输出 JSON，不要输出 ```json 标记
+
+门店原始数据：
+{store_list}"""
+
+            user_prompt = f"用户说：{message}\n\n请整理 {city} 的麦当劳门店信息，以 JSON 格式回复。"
+
+            llm_provider_id = await self._get_llm_provider_id()
+            if not llm_provider_id:
+                return None, self._format_stores_text(stores_data[:5], city)
+
+            resp = await self.context.llm_generate(
+                chat_provider_id=llm_provider_id,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
+
+            llm_text = self._get_llm_text(resp)
+            if not llm_text:
+                return None, self._format_stores_text(stores_data[:5], city)
+
+            rec_data = self._extract_json_from_text(llm_text)
+            if not rec_data:
+                return None, self._format_stores_text(stores_data[:5], city)
+
+            text = self._format_stores_from_json(rec_data)
+            return None, text
+
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] 门店查询异常: {e}", exc_info=True)
+            return None, f"❌ 门店查询失败: {e}"
+
+    async def _handle_activity_intent(
+        self, message: str, event: AstrMessageEvent
+    ) -> tuple:
+        """处理活动查询意图
+
+        Returns:
+            (image_url_or_path, text_fallback)
+        """
+        logger.info("[麦当劳推荐] 意图: 查询活动")
+
+        if not self.mcp_client:
+            return None, "❌ 未配置麦当劳 MCP Token，无法查询活动"
+
+        try:
+            init_ok = await self.mcp_client.ensure_initialized()
+            if not init_ok:
+                return None, "❌ MCP 初始化失败"
+
+            # 获取活动日历
+            campaign_resp = await self.mcp_client.get_campaign_calendar()
+            campaign_data = self._parse_mcp_response(campaign_resp)
+
+            if not campaign_data:
+                return None, "📅 抱歉，当前没有查询到活动信息~"
+
+            campaign_text = str(campaign_data)[:1500]
+
+            # 获取当前可售餐品（用于关联活动）
+            city = self._extract_city(message) or self.config.get("default_city", "北京市")
+            meals_data = await self._get_meals_data(city)
+
+            style_prompt = self._get_recommendation_style_prompt()
+
+            system_prompt = f"""你是一个麦当劳活动信息助手。{style_prompt}。
+
+根据提供的活动日历数据，整理出当前的活动信息。
+
+**你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
+```json
+{{
+  "activities": [
+    {{
+      "title": "活动名称",
+      "description": "活动描述",
+      "tag": "标签（如：限时/新品/优惠，可选）"
+    }}
+  ],
+  "blessing": "一句关于活动的祝福语"
+}}
+```
+
+要求：
+1. 整理 5 条以内的活动
+2. blessing 每次措辞不同
+3. 只输出 JSON，不要输出 ```json 标记
+
+活动日历原始数据：
+{campaign_text}"""
+
+            user_prompt = f"用户说：{message}\n\n请整理当前的麦当劳活动信息，以 JSON 格式回复。"
+
+            llm_provider_id = await self._get_llm_provider_id()
+            if not llm_provider_id:
+                return None, f"📅 麦当劳活动日历：\n\n{campaign_text[:800]}"
+
+            resp = await self.context.llm_generate(
+                chat_provider_id=llm_provider_id,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
+
+            llm_text = self._get_llm_text(resp)
+            if not llm_text:
+                return None, f"📅 麦当劳活动日历：\n\n{campaign_text[:800]}"
+
+            rec_data = self._extract_json_from_text(llm_text)
+            if not rec_data:
+                return None, f"📅 麦当劳活动日历：\n\n{campaign_text[:800]}"
+
+            text = self._format_activity_text(rec_data)
+            return None, text
+
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] 活动查询异常: {e}", exc_info=True)
+            return None, f"❌ 活动查询失败: {e}"
+
+    async def _handle_nutrition_intent(
+        self, message: str, event: AstrMessageEvent
+    ) -> tuple:
+        """处理营养查询意图
+
+        Returns:
+            (image_url_or_path, text_fallback)
+        """
+        logger.info("[麦当劳推荐] 意图: 查询营养信息")
+
+        if not self.mcp_client:
+            return None, "❌ 未配置麦当劳 MCP Token，无法查询营养信息"
+
+        try:
+            init_ok = await self.mcp_client.ensure_initialized()
+            if not init_ok:
+                return None, "❌ MCP 初始化失败"
+
+            nutrition_resp = await self.mcp_client.get_nutrition_foods()
+            nutrition_data = self._parse_mcp_response(nutrition_resp)
+
+            if not nutrition_data:
+                return None, "📊 抱歉，当前没有查询到营养信息~"
+
+            nutrition_str = str(nutrition_data)[:2000]
+            style_prompt = self._get_recommendation_style_prompt()
+
+            system_prompt = f"""你是一个麦当劳营养信息助手。{style_prompt}。
+
+根据用户的需求（如减脂、低卡、高蛋白等），从营养数据中推荐合适的餐品。
+
+**你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
+```json
+{{
+  "recommendations": [
+    {{
+      "name": "餐品名称",
+      "emoji": "🍔",
+      "energy": "308kcal",
+      "protein": "16g",
+      "reason": "推荐理由（结合营养数据）"
+    }}
+  ],
+  "blessing": "一句关于健康饮食的祝福语"
+}}
+```
+
+要求：
+1. 推荐 5 款以内的餐品，优先满足用户营养需求
+2. 每款标明热量和蛋白质
+3. blessing 每次措辞不同，和健康饮食相关
+4. 只输出 JSON，不要输出 ```json 标记
+
+营养原始数据：
+{nutrition_str}"""
+
+            user_prompt = f"用户说：{message}\n\n请根据营养数据为用户推荐合适的餐品，以 JSON 格式回复。"
+
+            llm_provider_id = await self._get_llm_provider_id()
+            if not llm_provider_id:
+                return None, "❌ 没有可用的 LLM Provider"
+
+            resp = await self.context.llm_generate(
+                chat_provider_id=llm_provider_id,
+                prompt=user_prompt,
+                system_prompt=system_prompt,
+            )
+
+            llm_text = self._get_llm_text(resp)
+            if not llm_text:
+                return None, "❌ LLM 返回内容为空"
+
+            rec_data = self._extract_json_from_text(llm_text)
+            if not rec_data:
+                return None, "❌ 无法解析 LLM 返回的 JSON"
+
+            # 复用推荐卡片模板渲染
+            meals_data = {"nutrition": nutrition_str, "store": {}}
+            image_url = await self._render_card(rec_data, meals_data)
+            text_fallback = self._format_text_from_json(rec_data, meals_data)
+            return image_url, text_fallback
+
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] 营养查询异常: {e}", exc_info=True)
+            return None, f"❌ 营养查询失败: {e}"
+
+    # ========== 辅助方法 ==========
+
+    async def _get_llm_provider_id(self) -> str:
+        """获取 LLM Provider ID（配置或自动检测）"""
+        llm_provider_id = self.config.get("llm_provider_id", "")
+        if llm_provider_id:
+            return llm_provider_id
+
+        try:
+            providers = self.context.get_all_providers()
+            if providers:
+                for p in providers:
+                    if hasattr(p, "id"):
+                        return p.id
+                return providers[0].id
+        except Exception as e:
+            logger.warning(f"[麦当劳推荐] 获取 Provider 列表失败: {e}")
+
+        return ""
+
+    def _get_llm_text(self, resp) -> str:
+        """从 LLMResponse 提取文本"""
+        if resp is None:
+            return ""
+        if hasattr(resp, "completion_text"):
+            return resp.completion_text or ""
+        if hasattr(resp, "result_chain") and resp.result_chain:
+            texts = []
+            for item in resp.result_chain:
+                if hasattr(item, "text"):
+                    texts.append(item.text)
+                elif isinstance(item, str):
+                    texts.append(item)
+            return "\n".join(texts)
+        return ""
+
+    def _format_coupons_for_prompt(self, coupons: list) -> str:
+        """格式化优惠券数据为提示词"""
+        parts = []
+        for i, c in enumerate(coupons[:10], 1):
+            if isinstance(c, dict):
+                title = c.get("title", "未知")
+                parts.append(f"{i}. {title}")
+                # 尝试提取更多字段
+                for key in ("content", "description", "discountAmount", "discountType", "useCondition"):
+                    val = c.get(key)
+                    if val:
+                        parts.append(f"   {key}: {val}")
+            else:
+                parts.append(f"{i}. {c}")
+        return "\n".join(parts)
+
+    def _format_stores_for_prompt(self, stores: list) -> str:
+        """格式化门店数据为提示词"""
+        parts = []
+        for i, s in enumerate(stores, 1):
+            if isinstance(s, dict):
+                name = s.get("storeName", "未知")
+                addr = s.get("address", "未知")
+                parts.append(f"{i}. 门店: {name}")
+                parts.append(f"   地址: {addr}")
+                for key in ("distance", "businessHours", "phone", "longitude", "latitude"):
+                    val = s.get(key)
+                    if val:
+                        parts.append(f"   {key}: {val}")
+            else:
+                parts.append(f"{i}. {s}")
+        return "\n".join(parts)
+
+    async def _render_coupon_card(
+        self, rec_data: Dict[str, Any], meals_data: Dict[str, Any]
+    ) -> Optional[str]:
+        """渲染优惠券卡片为图片"""
+        try:
+            with open(COUPON_TEMPLATE_PATH, "r", encoding="utf-8") as f:
+                tmpl = f.read()
+
+            store = meals_data.get("store") or {}
+            coupons = rec_data.get("coupons", [])
+
+            data = {
+                "store_name": store.get("storeName", ""),
+                "store_address": store.get("address", ""),
+                "coupons": coupons,
+                "blessing": rec_data.get("blessing", "省钱快乐！"),
+            }
+
+            render_options = {
+                "type": "png",
+                "quality": 100,
+                "full_page": True,
+            }
+            url = await self.html_render(
+                tmpl, data, return_url=True, options=render_options
+            )
+            return url
+        except Exception as e:
+            logger.error(f"[麦当劳推荐] 优惠券卡片渲染异常: {e}", exc_info=True)
+            return None
+
+    def _format_coupon_text(self, rec_data: Dict[str, Any], meals_data: Dict[str, Any]) -> str:
+        """格式化优惠券为纯文本"""
+        lines = ["🎫 麦当劳当前优惠券：", ""]
+
+        for item in rec_data.get("coupons", []):
+            title = item.get("title", "未知")
+            discount = item.get("discount", "")
+            desc = item.get("description", "")
+            tag = item.get("tag", "")
+
+            line = f"🎫 {title}"
+            if discount:
+                line += f" 【{discount}】"
+            lines.append(line)
+            if desc:
+                lines.append(f"   {desc}")
+            if tag:
+                lines.append(f"   📌 {tag}")
+            lines.append("")
+
+        blessing = rec_data.get("blessing", "")
+        if blessing:
+            lines.append(f"✨ {blessing}")
+
+        return "\n".join(lines)
+
+    def _format_coupon_text_fallback(self, coupons: list) -> str:
+        """优惠券文本兜底（LLM 不可用时）"""
+        lines = ["🎫 麦当劳当前优惠券：", ""]
+        for i, c in enumerate(coupons[:8], 1):
+            if isinstance(c, dict):
+                title = c.get("title", "未知")
+                lines.append(f"{i}. {title}")
+            else:
+                lines.append(f"{i}. {c}")
+        lines.append("")
+        lines.append("💡 优惠券以门店实际为准")
+        return "\n".join(lines)
+
+    def _format_stores_text(self, stores: list, city: str) -> str:
+        """格式化门店为纯文本"""
+        lines = [f"📍 {city} 麦当劳门店：", ""]
+        for i, s in enumerate(stores[:5], 1):
+            if isinstance(s, dict):
+                name = s.get("storeName", "未知")
+                addr = s.get("address", "地址未知")
+                lines.append(f"{i}. {name}")
+                lines.append(f"   📍 {addr}")
+            else:
+                lines.append(f"{i}. {s}")
+        return "\n".join(lines)
+
+    def _format_stores_from_json(self, rec_data: Dict[str, Any]) -> str:
+        """从 LLM JSON 格式化门店文本"""
+        city = rec_data.get("city", "")
+        lines = [f"📍 {city} 麦当劳门店：", ""]
+
+        for i, item in enumerate(rec_data.get("stores", []), 1):
+            name = item.get("name", "未知")
+            addr = item.get("address", "地址未知")
+            distance = item.get("distance", "")
+            hours = item.get("business_hours", "")
+
+            lines.append(f"{i}. {name}")
+            lines.append(f"   📍 {addr}")
+            if distance:
+                lines.append(f"   📏 {distance}")
+            if hours:
+                lines.append(f"   🕐 {hours}")
+            lines.append("")
+
+        blessing = rec_data.get("blessing", "")
+        if blessing:
+            lines.append(f"✨ {blessing}")
+
+        return "\n".join(lines)
+
+    def _format_activity_text(self, rec_data: Dict[str, Any]) -> str:
+        """从 LLM JSON 格式化活动文本"""
+        lines = ["📅 麦当劳当前活动：", ""]
+
+        for i, item in enumerate(rec_data.get("activities", []), 1):
+            title = item.get("title", "未知活动")
+            desc = item.get("description", "")
+            tag = item.get("tag", "")
+
+            lines.append(f"{i}. {title}")
+            if desc:
+                lines.append(f"   {desc}")
+            if tag:
+                lines.append(f"   📌 {tag}")
+            lines.append("")
+
+        blessing = rec_data.get("blessing", "")
+        if blessing:
+            lines.append(f"✨ {blessing}")
+
+        return "\n".join(lines)
+
+    def _extract_keyword(self, message: str) -> str:
+        """从消息中提取位置关键词（非城市部分）"""
+        # 移除城市名后，提取可能的位置关键词
+        city = self._extract_city(message)
+        if city:
+            remaining = message.replace(city, "").strip()
+            # 移除常见问句词
+            for w in ["附近", "的", "麦当劳", "门店", "哪里有", "哪里", "有", "吗", "？", "?", "帮我", "找一下", "查一下"]:
+                remaining = remaining.replace(w, "")
+            remaining = remaining.strip()
+            if remaining:
+                return remaining
+        return ""
+
     def _extract_city(self, message: str) -> Optional[str]:
         """从消息中提取城市名"""
         city_pattern = r"(北京|上海|广州|深圳|杭州|南京|成都|武汉|西安|重庆|天津|苏州|长沙|郑州|青岛|大连|厦门|福州|济南|合肥|南昌|南宁|昆明|贵阳|拉萨|乌鲁木齐|兰州|西宁|银川|海口|三亚|石家庄|太原|沈阳|长春|哈尔滨|呼和浩特|宁波|无锡|常州|温州|佛山|东莞|珠海|中山|泉州|烟台|潍坊|徐州|南通|扬州|镇江|泰州|盐城|淮安|连云港|宿迁|湖州|嘉兴|绍兴|金华|台州|芜湖|蚌埠|马鞍山|安庆|黄山|滁州|阜阳|宿州|六安|亳州|池州|宣城|漳州|龙岩|三明|南平|宁德|九江|赣州|上饶|宜春|吉安|抚州|景德镇|萍乡|新余|鹰潭|株洲|湘潭|衡阳|岳阳|常德|张家界|益阳|郴州|永州|怀化|娄底|邵阳|襄樊|宜昌|黄石|十堰|孝感|荆门|鄂州|黄冈|咸宁|随州|荆州|安阳|新乡|焦作|鹤壁|濮阳|许昌|漯河|三门峡|南阳|商丘|信阳|周口|驻马店|平顶山|开封|洛阳|平顶山|邯郸|邢台|保定|张家口|承德|唐山|秦皇岛|沧州|廊坊|衡水|大同|阳泉|长治|晋城|朔州|晋中|运城|忻州|临汾|吕梁|包头|乌海|赤峰|通辽|鄂尔多斯|呼伦贝尔|巴彦淖尔|乌兰察布|鞍山|抚顺|本溪|丹东|锦州|营口|阜新|辽阳|盘锦|铁岭|朝阳|葫芦岛|吉林|四平|辽源|通化|白山|松原|白城|齐齐哈尔|鸡西|鹤岗|双鸭山|大庆|伊春|佳木斯|七台河|牡丹江|黑河|绥化|齐齐哈尔|桂林|柳州|梧州|北海|防城港|钦州|贵港|玉林|百色|贺州|河池|来宾|崇左|遵义|安顺|六盘水|毕节|铜仁|玉溪|曲靖|保山|昭通|丽江|普洱|临沧|白银|天水|嘉峪关|金昌|武威|张掖|平凉|酒泉|庆阳|定西|陇南|石嘴山|吴忠|固原|中卫|克拉玛依|吐鲁番|哈密)市?"
@@ -863,14 +1451,42 @@ class Main(Star):
 
     @filter.regex(r".+")
     async def on_message(self, event: AstrMessageEvent):
-        """监听所有消息，检测关键词"""
+        """监听所有消息，检测关键词和意图"""
         message = event.message_str
 
         # 跳过指令消息（以 / 开头的消息）
         if message.startswith("/") or message.startswith("\\"):
             return
 
-        # 检测关键词
+        # 优先检测意图（优惠券/门店/活动/营养）
+        if self.config.get("enable_intent_detection", True):
+            intent = self._detect_intent(message)
+        else:
+            intent = None
+        if intent:
+            logger.info(f"[麦当劳推荐] 检测到意图: {intent}")
+
+            if intent == "coupon":
+                image_url, text_fallback = await self._handle_coupon_intent(message, event)
+            elif intent == "store":
+                image_url, text_fallback = await self._handle_store_intent(message, event)
+            elif intent == "activity":
+                image_url, text_fallback = await self._handle_activity_intent(message, event)
+            elif intent == "nutrition":
+                image_url, text_fallback = await self._handle_nutrition_intent(message, event)
+            else:
+                return
+
+            if image_url:
+                logger.info(f"[麦当劳推荐] 意图 {intent} 渲染图片成功")
+                yield event.image_result(image_url)
+            else:
+                logger.info(f"[麦当劳推荐] 意图 {intent} 发送文本消息")
+                yield event.plain_result(text_fallback)
+            event.stop_event()
+            return
+
+        # 未匹配意图，检测关键词触发美食推荐
         matched_keyword = self._match_keyword(message)
         if not matched_keyword:
             return  # 未匹配到关键词，不处理
