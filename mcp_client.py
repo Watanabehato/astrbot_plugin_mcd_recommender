@@ -176,13 +176,20 @@ class McdMCPClient:
             keyword: 位置关键词
             be_type: 业务类型 1=到店自取，5=得来速
             search_type: 搜索类型 2=按位置搜索
+
+        Note:
+            MCP API 要求 searchType=2 时 city 和 keyword 都必填，
+            空字符串会被拒绝，因此只发送非空值。
         """
-        return await self.call_tool("query-nearby-stores", {
+        args: Dict[str, Any] = {
             "searchType": search_type,
             "beType": be_type,
-            "city": city,
-            "keyword": keyword
-        })
+        }
+        if city:
+            args["city"] = city
+        if keyword:
+            args["keyword"] = keyword
+        return await self.call_tool("query-nearby-stores", args)
 
     async def query_meals(
         self,

@@ -37,7 +37,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.1.2")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.1.3")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -294,33 +294,27 @@ class Main(Star):
 
             # 如果没有指定门店，查询附近门店
             if not store_code:
-                # MCP 不认"宁波市"，只认"宁波"，去掉"市"后缀
+                # MCP API 要求 searchType=2 时 city 和 keyword 都必填
+                # 去掉"市"后缀（MCP 可能不认"上海市"，只认"上海"）
                 city_for_mcp = city.rstrip("市") if city.endswith("市") else city
-                logger.debug(f"查询 {city_for_mcp} 附近的门店，关键词={keyword or '无'}...")
+                # 如果没有提取到关键词，用城市名当关键词（保证两者都非空）
+                keyword_for_mcp = keyword or city_for_mcp
+                logger.debug(f"查询 {city_for_mcp} 附近的门店，关键词={keyword_for_mcp}...")
 
                 stores_resp = await self.mcp_client.query_nearby_stores(
                     city=city_for_mcp,
-                    keyword=keyword,
+                    keyword=keyword_for_mcp,
                     be_type=be_type
                 )
                 stores_data = self._parse_mcp_response(stores_resp)
 
-                # 重试1: 如果没查到且有关键词，去掉关键词只用城市重试
-                if (not stores_data or not isinstance(stores_data, list) or len(stores_data) == 0) and city_for_mcp and keyword:
-                    logger.debug(f"去掉关键词重试: city={city_for_mcp}")
-                    stores_resp = await self.mcp_client.query_nearby_stores(
-                        city=city_for_mcp,
-                        keyword="",
-                        be_type=be_type
-                    )
-                    stores_data = self._parse_mcp_response(stores_resp)
-
-                # 重试2: 如果还是没查到，用城市名当关键词重试
+                # 重试: 如果没查到，尝试带"市"后缀重试（MCP 可能需要"上海市"格式）
                 if (not stores_data or not isinstance(stores_data, list) or len(stores_data) == 0) and city_for_mcp:
-                    logger.debug(f"用城市名作为关键词重试: {city_for_mcp}")
+                    city_with_suffix = city_for_mcp + "市"
+                    logger.debug(f"带市后缀重试: city={city_with_suffix}, keyword={keyword_for_mcp}")
                     stores_resp = await self.mcp_client.query_nearby_stores(
-                        city="",
-                        keyword=city_for_mcp,
+                        city=city_with_suffix,
+                        keyword=keyword_for_mcp,
                         be_type=be_type
                     )
                     stores_data = self._parse_mcp_response(stores_resp)
