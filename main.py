@@ -37,7 +37,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.1.0")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.1.1")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -294,13 +294,27 @@ class Main(Star):
 
             # 如果没有指定门店，查询附近门店
             if not store_code:
-                logger.debug(f"查询 {city} 附近的门店...")
+                # MCP 不认"宁波市"，只认"宁波"，去掉"市"后缀
+                city_for_mcp = city.rstrip("市") if city.endswith("市") else city
+                logger.debug(f"查询 {city_for_mcp} 附近的门店，关键词={keyword or '无'}...")
+
                 stores_resp = await self.mcp_client.query_nearby_stores(
-                    city=city,
+                    city=city_for_mcp,
                     keyword=keyword,
                     be_type=be_type
                 )
                 stores_data = self._parse_mcp_response(stores_resp)
+
+                # 如果没查到且有城市名，用城市名当关键词重试
+                if (not stores_data or not isinstance(stores_data, list) or len(stores_data) == 0) and city_for_mcp and not keyword:
+                    logger.debug(f"用城市名作为关键词重试: {city_for_mcp}")
+                    stores_resp = await self.mcp_client.query_nearby_stores(
+                        city="",
+                        keyword=city_for_mcp,
+                        be_type=be_type
+                    )
+                    stores_data = self._parse_mcp_response(stores_resp)
+
                 if stores_data and isinstance(stores_data, list) and len(stores_data) > 0:
                     store_info = stores_data[0]
                     store_code = store_info.get("storeCode", "")
@@ -751,7 +765,8 @@ class Main(Star):
         logger.info("[麦当劳推荐] 意图: 查询优惠券")
 
         city = self._extract_city(message) or self.config.get("default_city", "北京市")
-        meals_data = await self._get_meals_data(city)
+        keyword = self._extract_keyword(message)
+        meals_data = await self._get_meals_data(city, keyword)
 
         coupons = meals_data.get("coupons") or []
         if not coupons:
@@ -843,10 +858,18 @@ class Main(Star):
                 return None, "❌ MCP 初始化失败"
 
             _, be_type = self._get_order_type_config()
+            city_for_mcp = city.rstrip("市") if city.endswith("市") else city
             stores_resp = await self.mcp_client.query_nearby_stores(
-                city=city, keyword=keyword, be_type=be_type
+                city=city_for_mcp, keyword=keyword, be_type=be_type
             )
             stores_data = self._parse_mcp_response(stores_resp)
+
+            # 重试：用城市名当关键词
+            if (not stores_data or not isinstance(stores_data, list) or len(stores_data) == 0) and not keyword:
+                stores_resp = await self.mcp_client.query_nearby_stores(
+                    city="", keyword=city_for_mcp, be_type=be_type
+                )
+                stores_data = self._parse_mcp_response(stores_resp)
 
             if not stores_data or not isinstance(stores_data, list):
                 return None, f"抱歉，未找到 {city} 的麦当劳门店信息~"
@@ -1282,16 +1305,31 @@ class Main(Star):
         return "\n".join(lines)
 
     def _extract_keyword(self, message: str) -> str:
-        """从消息中提取位置关键词（非城市部分）"""
-        # 移除城市名后，提取可能的位置关键词
+        """从消息中提取位置关键词（区县/地标等）"""
+        # 优先提取「XX区」「XX县」「XX镇」等区县信息
+        district_pattern = r'([\u4e00-\u9fff]{2,4}(?:区|县|镇|街道|路|广场|商场|大厦|中心))'
+        matches = re.findall(district_pattern, message)
+        if matches:
+            # 去掉可能重复的城市部分
+            city = self._extract_city(message)
+            for m in matches:
+                if city and city.rstrip("市") in m:
+                    continue
+                return m
+
+        # 移除城市名后，提取剩余位置关键词
         city = self._extract_city(message)
         if city:
             remaining = message.replace(city, "").strip()
             # 移除常见问句词
-            for w in ["附近", "的", "麦当劳", "门店", "哪里有", "哪里", "有", "吗", "？", "?", "帮我", "找一下", "查一下"]:
+            for w in ["附近", "的", "麦当劳", "门店", "哪里有", "哪里", "有", "吗",
+                       "？", "?", "帮我", "找一下", "查一下", "今天", "现在",
+                       "麦麦", "m记", "优惠", "券", "折扣", "打折",
+                       "什么", "活动", "新品", "上新", "限定", "日历",
+                       "营养", "热量", "卡路里", "减肥", "减脂", "低卡", "蛋白质"]:
                 remaining = remaining.replace(w, "")
             remaining = remaining.strip()
-            if remaining:
+            if remaining and len(remaining) >= 2:
                 return remaining
         return ""
 
