@@ -27,7 +27,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.1")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.2")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -550,13 +550,112 @@ class Main(Star):
         示例: /mcd 今天午饭吃什么
               /mcd 推荐一个减脂套餐
               /mcd 上海有什么好吃的
+              /mcd test  - 测试配置和连接状态
         """
         user_message = args if args else event.message_str
-        logger.info("收到 /mcd 指令，触发美食推荐")
+
+        # 诊断指令
+        if user_message.strip().lower() in ("test", "测试", "status", "状态"):
+            diag = await self._run_diagnostics()
+            yield event.plain_result(diag)
+            event.stop_event()
+            return
+
+        logger.info("[麦当劳推荐] 收到 /mcd 指令，触发美食推荐")
 
         recommendation = await self._do_recommendation(user_message, event)
         yield event.plain_result(recommendation)
         event.stop_event()
+
+    async def _run_diagnostics(self) -> str:
+        """运行诊断，返回诊断结果文本"""
+        lines = ["🔍 麦当劳推荐插件诊断", "=" * 30]
+
+        # 1. 检查配置
+        mcp_token = self.config.get("mcp_token", "")
+        keywords = self.config.get("trigger_keywords", "（默认）")
+        city = self.config.get("default_city", "（默认）")
+        style = self.config.get("recommendation_style", "（默认）")
+
+        lines.append(f"📋 配置状态:")
+        lines.append(f"  Token: {'✅ 已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌ 未配置!'}")
+        lines.append(f"  Token完整值: '{mcp_token}'")
+        lines.append(f"  关键词: {keywords}")
+        lines.append(f"  默认城市: {city}")
+        lines.append(f"  推荐风格: {style}")
+        lines.append(f"  MCP客户端: {'✅ 已创建' if self.mcp_client else '❌ 未创建'}")
+        lines.append("")
+
+        # 2. 测试 MCP 连接
+        if not mcp_token:
+            lines.append("❌ MCP Token 未配置，无法测试连接")
+            lines.append("")
+            lines.append("💡 请在管理面板填入 Token:")
+            lines.append("   插件管理 → 麦当劳美食推荐 → 配置 → MCP Token")
+            return "\n".join(lines)
+
+        if not self.mcp_client:
+            lines.append("❌ MCP 客户端未创建（可能插件未正确加载配置）")
+            return "\n".join(lines)
+
+        # 3. 测试 initialize
+        lines.append("🔌 测试 MCP 连接...")
+        try:
+            init_ok = await self.mcp_client.ensure_initialized()
+            if init_ok:
+                lines.append("  ✅ MCP 初始化成功!")
+            else:
+                lines.append("  ❌ MCP 初始化失败!")
+                return "\n".join(lines)
+        except Exception as e:
+            lines.append(f"  ❌ MCP 初始化异常: {e}")
+            return "\n".join(lines)
+
+        # 4. 测试 now-time-info
+        lines.append("")
+        lines.append("🛠 测试调用 now-time-info...")
+        try:
+            resp = await self.mcp_client.call_tool("now-time-info", {})
+            if resp and not (isinstance(resp, dict) and resp.get("error")):
+                data = self._parse_mcp_response(resp)
+                if data:
+                    lines.append(f"  ✅ 调用成功! 返回数据类型: {type(data).__name__}")
+                    if isinstance(data, dict):
+                        lines.append(f"  📅 当前时间: {data.get('formatted', str(data)[:100])}")
+                else:
+                    lines.append(f"  ⚠️ 调用返回但解析失败，原始: {str(resp)[:200]}")
+            else:
+                lines.append(f"  ❌ 调用失败: {resp}")
+        except Exception as e:
+            lines.append(f"  ❌ 调用异常: {e}")
+
+        # 5. 测试查门店
+        lines.append("")
+        lines.append("🏪 测试查询门店...")
+        try:
+            resp = await self.mcp_client.call_tool("query-nearby-stores", {
+                "searchType": 2,
+                "beType": 1,
+                "city": "北京市",
+                "keyword": "王府井"
+            })
+            if resp and not (isinstance(resp, dict) and resp.get("error")):
+                data = self._parse_mcp_response(resp)
+                if data and isinstance(data, list) and len(data) > 0:
+                    store = data[0]
+                    lines.append(f"  ✅ 查到 {len(data)} 家门店")
+                    lines.append(f"  📍 第1家: {store.get('storeName', '?')} (code: {store.get('storeCode', '?')})")
+                else:
+                    lines.append(f"  ⚠️ 解析失败: {str(data)[:200]}")
+            else:
+                lines.append(f"  ❌ 查询失败: {resp}")
+        except Exception as e:
+            lines.append(f"  ❌ 查询异常: {e}")
+
+        lines.append("")
+        lines.append("✅ 诊断完成!")
+
+        return "\n".join(lines)
 
     @filter.regex(r".+")
     async def on_message(self, event: AstrMessageEvent):
