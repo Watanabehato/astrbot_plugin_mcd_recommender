@@ -6,6 +6,7 @@
 import re
 import json
 import os
+import random
 from typing import Optional, List, Dict, Any
 
 from astrbot.api.star import Star, Context
@@ -29,7 +30,7 @@ class Main(Star):
         # 打印配置信息方便排查
         mcp_token = self.config.get("mcp_token", "")
         keywords = self.config.get("trigger_keywords", "吃什么,麦当劳,麦麦,今天吃啥,午饭,晚饭,早餐,夜宵")
-        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.6")
+        logger.info(f"[麦当劳推荐] 插件加载中... 版本: 1.0.7")
         logger.info(f"[麦当劳推荐] 配置: token={'已配置(' + mcp_token[:8] + '...)' if mcp_token else '❌未配置'}, 关键词={keywords}")
 
         self._init_mcp_client()
@@ -355,12 +356,13 @@ class Main(Star):
             parts.append("")
 
         if meals_data.get("meals"):
-            parts.append("【当前可售餐品（部分）】")
+            parts.append("【当前可售餐品（随机抽样）】")
             meals = meals_data["meals"]
-            count = 0
-            for code, meal in meals.items():
-                if count >= 20:
-                    break
+            # 将字典转为列表，随机打乱后取 25 款，避免每次推荐重复
+            meal_items = list(meals.items())
+            random.shuffle(meal_items)
+            sample_count = min(25, len(meal_items))
+            for code, meal in meal_items[:sample_count]:
                 name = meal.get("name", "未知")
                 price = meal.get("currentPrice", "未知")
                 original_price = meal.get("originalPrice", "")
@@ -371,7 +373,6 @@ class Main(Star):
                 if discount:
                     price_str += f" [{discount}]"
                 parts.append(f"- {name}: {price_str}")
-                count += 1
             parts.append("")
 
         if meals_data.get("coupons"):
@@ -416,6 +417,8 @@ class Main(Star):
 
 请根据用户的需求，从麦当劳餐品中推荐最合适的美食。
 
+**每次推荐都要有新鲜感！** 请从提供的餐品列表中随机选择不同种类的餐品组合，避免每次都推荐相同的经典款。尝试推荐一些用户可能忽略的好味道，包括但不限于：限定新品、不同口味变体、搭配套餐、小食拼盘、甜品饮品等。
+
 **你必须以 JSON 格式回复，不要输出任何其他内容。** JSON 格式如下：
 ```json
 {{
@@ -432,13 +435,13 @@ class Main(Star):
 ```
 
 要求：
-1. 推荐 {max_rec} 款以内的餐品
+1. 推荐 {max_rec} 款以内的餐品，尽量涵盖不同品类（主食/小食/饮品/甜品）
 2. 每款推荐要有 emoji 表情和推荐理由
 3. 如果用户有特殊需求（如减脂、早餐、套餐等），请针对性推荐
-4. blessing 是一句简短的祝福语
+4. blessing 是一句简短的祝福语，每次措辞不同
 5. 只输出 JSON，不要输出 ```json 标记
 
-以下是当前可用的餐品信息：
+以下是当前可用的餐品信息（已随机抽样）：
 {meals_context}
 
 注意：如果餐品信息不完整，请基于你对麦当劳的了解进行推荐。"""
